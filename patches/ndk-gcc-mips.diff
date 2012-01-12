@@ -1,0 +1,908 @@
+Index: gcc/gcc-4.5.2/gcc/config/mips/linux.h
+===================================================================
+--- gcc.orig/gcc-4.5.2/gcc/config/mips/linux.h	2011-12-16 13:43:58.487432778 -0800
++++ gcc/gcc-4.5.2/gcc/config/mips/linux.h	2011-12-16 17:30:20.090780427 -0800
+@@ -47,6 +47,7 @@
+     /* The GNU C++ standard library requires this.  */		\
+     if (c_dialect_cxx ())					\
+       builtin_define ("_GNU_SOURCE");				\
++    ANDROID_TARGET_OS_CPP_BUILTINS();				\
+   } while (0)
+ 
+ #undef SUBTARGET_CPP_SPEC
+@@ -55,8 +56,8 @@
+ /* A standard GNU/Linux mapping.  On most targets, it is included in
+    CC1_SPEC itself by config/linux.h, but mips.h overrides CC1_SPEC
+    and provides this hook instead.  */
+-#undef SUBTARGET_CC1_SPEC
+-#define SUBTARGET_CC1_SPEC "%{profile:-p}"
++#undef LINUX_SUBTARGET_CC1_SPEC
++#define LINUX_SUBTARGET_CC1_SPEC "%{profile:-p}"
+ 
+ /* From iris5.h */
+ /* -G is incompatible with -KPIC which is the default, so only allow objects
+@@ -67,8 +68,8 @@
+ #define GLIBC_DYNAMIC_LINKER "/lib/ld.so.1"
+ 
+ /* Borrowed from sparc/linux.h */
+-#undef LINK_SPEC
+-#define LINK_SPEC \
++#undef LINUX_SUBTARGET_LINK_SPEC
++#define LINUX_SUBTARGET_LINK_SPEC \
+  "%(endian_spec) \
+   %{shared:-shared} \
+   %{!shared: \
+@@ -103,8 +104,8 @@
+ #undef ASM_OUTPUT_REG_PUSH
+ #undef ASM_OUTPUT_REG_POP
+ 
+-#undef LIB_SPEC
+-#define LIB_SPEC "\
++#undef LINUX_SUBTARGET_LIB_SPEC
++#define LINUX_SUBTARGET_LIB_SPEC "\
+ %{pthread:-lpthread} \
+ %{shared:-lc} \
+ %{!shared: \
+@@ -152,12 +153,39 @@
+ #define SUBTARGET_OVERRIDE_OPTIONS                              \
+ do {                                                            \
+   /* __thread_support is not supported by uClibc.  */           \
+-  if (linux_uclibc)                                             \
++  if (OPTION_UCLIBC)                                            \
+     targetm.have_tls = 0;                                       \
+ } while (0)
+ 
+ /* Similar to standard Linux, but adding -ffast-math support.  */
+-#undef  ENDFILE_SPEC
+-#define ENDFILE_SPEC \
++#undef  LINUX_TARGET_ENDFILE_SPEC
++#define LINUX_TARGET_ENDFILE_SPEC \
+   "%{ffast-math|funsafe-math-optimizations:crtfastmath.o%s} \
+    %{shared|pie:crtendS.o%s;:crtend.o%s} crtn.o%s"
++
++#undef  LINK_SPEC
++#define LINK_SPEC							\
++  LINUX_OR_ANDROID_LD (LINUX_SUBTARGET_LINK_SPEC,			\
++		       LINUX_SUBTARGET_LINK_SPEC " " ANDROID_LINK_SPEC)
++
++#undef  SUBTARGET_CC1_SPEC
++#define SUBTARGET_CC1_SPEC						\
++  LINUX_OR_ANDROID_CC (LINUX_SUBTARGET_CC1_SPEC,			\
++		       LINUX_SUBTARGET_CC1_SPEC " " ANDROID_CC1_SPEC("-fpic"))
++
++#undef  CC1PLUS_SPEC
++#define CC1PLUS_SPEC							\
++  LINUX_OR_ANDROID_CC ("", ANDROID_CC1PLUS_SPEC)
++
++#undef  LIB_SPEC
++#define LIB_SPEC							\
++  LINUX_OR_ANDROID_LD (LINUX_SUBTARGET_LIB_SPEC,			\
++		       LINUX_SUBTARGET_LIB_SPEC " " ANDROID_LIB_SPEC)
++
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC							\
++  LINUX_OR_ANDROID_LD (LINUX_TARGET_STARTFILE_SPEC, ANDROID_STARTFILE_SPEC)
++
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC							\
++  LINUX_OR_ANDROID_LD (LINUX_TARGET_ENDFILE_SPEC, ANDROID_ENDFILE_SPEC)
+Index: gcc/gcc-4.5.2/gcc/config/mips/t-linux-android
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ gcc/gcc-4.5.2/gcc/config/mips/t-linux-android	2011-12-16 17:57:43.346928809 -0800
+@@ -0,0 +1,3 @@
++MULTILIB_OPTIONS = mips32r2 msoft-float mips16
++MULTILIB_DIRNAMES = mips-r2 sf mips16
++MULTILIB_EXCLUSIONS := !mips32r2/msoft-float !mips32r2/mips16
+Index: gcc/gcc-4.5.2/gcc/config.gcc
+===================================================================
+--- gcc.orig/gcc-4.5.2/gcc/config.gcc	2011-12-16 13:56:15.395086912 -0800
++++ gcc/gcc-4.5.2/gcc/config.gcc	2011-12-16 16:35:34.762489249 -0800
+@@ -410,6 +410,9 @@
+ 	;;
+ esac
+ 
++# Common C libraries.
++tm_defines="${tm_defines} LIBC_GLIBC=1 LIBC_UCLIBC=2 LIBC_BIONIC=3"
++
+ # Common parts for widely ported systems.
+ case ${target} in
+ *-*-darwin*)
+@@ -522,17 +525,36 @@
+       tm_defines="$tm_defines OPTION_GLIBC=1";;
+   esac
+   case ${target} in
++    *-*-*android* | *-android-linux-*)
++      tm_defines="${tm_defines} DEFAULT_LIBC=LIBC_BIONIC"
++      ;;
+     *-*-*uclibc*)
+-      tm_defines="${tm_defines} UCLIBC_DEFAULT=1"
++      tm_defines="${tm_defines} DEFAULT_LIBC=LIBC_UCLIBC"
+       ;;
+     *)
+-      tm_defines="${tm_defines} UCLIBC_DEFAULT=0"
++      tm_defines="${tm_defines} DEFAULT_LIBC=LIBC_GLIBC"
+       ;;
+   esac
+   # Assume that glibc or uClibc are being used and so __cxa_atexit is provided.
+   default_use_cxa_atexit=yes
+   use_gcc_tgmath=no
+   use_gcc_stdint=wrap
++  # Add Android userspace support to Linux targets.
++  case $target in
++    *linux*)
++      tm_file="${tm_file} linux-android.h"
++      extra_options="$extra_options linux-android.opt"
++      ;;
++  esac
++  # Enable compilation for Android by default for *android* targets.
++  case $target in
++    *-*-*android* | *-android-linux-*)
++      tm_defines="${tm_defines} ANDROID_DEFAULT=1"
++      ;;
++    *)
++      tm_defines="${tm_defines} ANDROID_DEFAULT=0"
++      ;;
++  esac
+   ;;
+ *-*-netbsd*)
+   tmake_file="t-slibgcc-elf-ver t-libc-ok t-netbsd t-libgcc-pic"
+@@ -897,7 +919,7 @@
+ bfin*-uclinux*)
+ 	tm_file="${tm_file} dbxelf.h elfos.h bfin/elf.h linux.h glibc-stdint.h bfin/uclinux.h"
+ 	tmake_file=bfin/t-bfin-uclinux
+-	tm_defines="${tm_defines} UCLIBC_DEFAULT=1"
++	tm_defines="${tm_defines} DEFAULT_LIBC=LIBC_UCLIBC"
+ 	extra_options="${extra_options} linux.opt"
+ 	use_collect2=no
+ 	;;
+@@ -978,7 +1000,7 @@
+ 	tm_file="dbxelf.h elfos.h svr4.h ${tm_file} linux.h glibc-stdint.h moxie/uclinux.h"
+ 	extra_parts="crti.o crtn.o crtbegin.o crtend.o"
+ 	tmake_file="${tmake_file} moxie/t-moxie moxie/t-moxie-softfp soft-fp/t-softfp"
+-	tm_defines="${tm_defines} UCLIBC_DEFAULT=1"
++	tm_defines="${tm_defines} DEFAULT_LIBC=LIBC_UCLIBC"
+ 	extra_options="${extra_options} linux.opt"
+ 	;;
+ h8300-*-rtems*)
+@@ -1713,7 +1735,7 @@
+ 	default_m68k_cpu=68020
+ 	default_cf_cpu=5206
+ 	tm_file="${tm_file} dbxelf.h elfos.h svr4.h linux.h glibc-stdint.h flat.h m68k/linux.h m68k/uclinux.h ./sysroot-suffix.h"
+- 	tm_defines="${tm_defines} MOTOROLA=1 UCLIBC_DEFAULT=1"
++ 	tm_defines="${tm_defines} MOTOROLA=1 DEFAULT_LIBC=LIBC_UCLIBC"
+ 	extra_options="${extra_options} linux.opt"
+ 	tmake_file="m68k/t-floatlib m68k/t-uclinux m68k/t-mlibs"
+ 	;;
+@@ -1868,6 +1890,12 @@
+ 		fi
+ 		;;
+         esac
++        case ${target} in
++        *android*)
++                # Default to little-endian for MIPS Android
++                tm_defines="${tm_defines} TARGET_ENDIAN_DEFAULT=0"
++                tmake_file="$tmake_file mips/t-linux-android"
++        esac
+ 	extra_parts="$extra_parts crtfastmath.o"
+ 	test x$with_llsc != x || with_llsc=yes
+ 	;;
+Index: gcc/gcc-4.5.2/gcc/config/linux-android.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ gcc/gcc-4.5.2/gcc/config/linux-android.h	2011-12-16 14:03:44.529313922 -0800
+@@ -0,0 +1,60 @@
++/* Configuration file for Linux Android targets.
++   Copyright (C) 2008, 2010
++   Free Software Foundation, Inc.
++   Contributed by Doug Kwan (dougkwan@google.com)
++   Rewritten by CodeSourcery, Inc.
++
++   This file is part of GCC.
++
++   GCC is free software; you can redistribute it and/or modify it
++   under the terms of the GNU General Public License as published
++   by the Free Software Foundation; either version 3, or (at your
++   option) any later version.
++
++   GCC is distributed in the hope that it will be useful, but WITHOUT
++   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
++   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
++   License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with GCC; see the file COPYING3.  If not see
++   <http://www.gnu.org/licenses/>.  */
++
++#define ANDROID_TARGET_OS_CPP_BUILTINS()                        \
++    do {                                                        \
++        if (OPTION_ANDROID)                                     \
++          builtin_define ("__ANDROID__");                       \
++    } while (0)
++
++#if ANDROID_DEFAULT
++# define NOANDROID "mno-android"
++#else
++# define NOANDROID "!mandroid"
++#endif
++
++#define LINUX_OR_ANDROID_CC(LINUX_SPEC, ANDROID_SPEC) \
++  "%{" NOANDROID "|tno-android-cc:" LINUX_SPEC ";:" ANDROID_SPEC "}"
++
++#define LINUX_OR_ANDROID_LD(LINUX_SPEC, ANDROID_SPEC) \
++  "%{" NOANDROID "|tno-android-ld:" LINUX_SPEC ";:" ANDROID_SPEC "}"
++
++#define ANDROID_LINK_SPEC \
++  "%{shared: -Bsymbolic}"
++
++#define ANDROID_CC1_SPEC(ANDROID_PIC_DEFAULT)   \
++  "%{!mglibc:%{!muclibc:%{!mbionic: -mbionic}}} "			\
++  "%{!fno-pic:%{!fno-PIC:%{!fpic:%{!fPIC: " ANDROID_PIC_DEFAULT "}}}}"
++
++#define ANDROID_CC1PLUS_SPEC						\
++  "%{!fexceptions:%{!fno-exceptions: -fexceptions}} "		\
++  "%{!frtti:%{!fno-rtti: -frtti}}"
++
++#define ANDROID_LIB_SPEC \
++  "%{!static: -ldl}"
++
++#define ANDROID_STARTFILE_SPEC						\
++  "%{!shared:"								\
++  "  %{static: crtbegin_static%O%s;: crtbegin_dynamic%O%s};: crtbegin_so%O%s}"
++
++#define ANDROID_ENDFILE_SPEC \
++  "%{!shared: crtend_android%O%s;: crtend_so%O%s}"
+Index: gcc/gcc-4.5.2/gcc/config/linux-android.opt
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ gcc/gcc-4.5.2/gcc/config/linux-android.opt	2011-12-16 14:03:47.945330899 -0800
+@@ -0,0 +1,23 @@
++; Android specific options.
++
++; Copyright (C) 2008, 2010 Free Software Foundation, Inc.
++;
++; This file is part of GCC.
++;
++; GCC is free software; you can redistribute it and/or modify it under
++; the terms of the GNU General Public License as published by the Free
++; Software Foundation; either version 3, or (at your option) any later
++; version.
++;
++; GCC is distributed in the hope that it will be useful, but WITHOUT ANY
++; WARRANTY; without even the implied warranty of MERCHANTABILITY or
++; FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++; for more details.
++;
++; You should have received a copy of the GNU General Public License
++; along with GCC; see the file COPYING3.  If not see
++; <http://www.gnu.org/licenses/>.
++
++mandroid
++Target Report Mask(ANDROID) Var(flag_android) Init(ANDROID_DEFAULT ? OPTION_MASK_ANDROID : 0)
++Generate code for the Android platform.
+Index: gcc/gcc-4.5.2/gcc/unwind-dw2-fde-glibc.c
+===================================================================
+--- gcc.orig/gcc-4.5.2/gcc/unwind-dw2-fde-glibc.c	2011-12-16 14:04:56.525671050 -0800
++++ gcc/gcc-4.5.2/gcc/unwind-dw2-fde-glibc.c	2011-12-16 14:08:22.594692714 -0800
+@@ -46,8 +46,10 @@
+ #include "gthr.h"
+ 
+ #if !defined(inhibit_libc) && defined(HAVE_LD_EH_FRAME_HDR) \
+-    && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ > 2) \
+-	|| (__GLIBC__ == 2 && __GLIBC_MINOR__ == 2 && defined(DT_CONFIG)))
++    && ((defined(__BIONIC__) && (defined(mips) || defined(__mips__))) \
++        || (__GLIBC__ > 2 \
++            || (__GLIBC__ == 2 && __GLIBC_MINOR__ > 2) \
++	    || (__GLIBC__ == 2 && __GLIBC_MINOR__ == 2 && defined(DT_CONFIG))))
+ # define USE_PT_GNU_EH_FRAME
+ #endif
+ 
+Index: gcc/gcc-4.5.2/gcc/gthr-posix.h
+===================================================================
+--- gcc.orig/gcc-4.5.2/gcc/gthr-posix.h	2011-12-16 14:09:59.967175738 -0800
++++ gcc/gcc-4.5.2/gcc/gthr-posix.h	2011-12-16 16:25:17.279427317 -0800
+@@ -38,6 +38,19 @@
+ #define _REENTRANT 1
+ #endif
+ 
++/* The following should normally be in a different header file,
++ * but I couldn't find the right location. The point of the macro
++ * definition below is to prevent libsupc++ and libstdc++ to reference
++ * weak symbols in their static C++ constructors. Such code crashes
++ * when a shared object linked statically to these libraries is
++ * loaded on Android 2.1 (Eclair) and older platform releases, due
++ * to a dynamic linker bug.
++ */
++#ifdef __ANDROID__
++#undef GTHREAD_USE_WEAK
++#define GTHREAD_USE_WEAK 0
++#endif
++
+ #include <pthread.h>
+ #include <unistd.h>
+ 
+@@ -124,7 +137,9 @@
+ __gthrw(pthread_equal)
+ __gthrw(pthread_self)
+ __gthrw(pthread_detach)
++#ifndef __BIONIC__
+ __gthrw(pthread_cancel)
++#endif
+ __gthrw(sched_yield)
+ 
+ __gthrw(pthread_mutex_lock)
+@@ -238,7 +253,15 @@
+ __gthread_active_p (void)
+ {
+   static void *const __gthread_active_ptr
+-    = __extension__ (void *) &__gthrw_(pthread_cancel);
++    = __extension__ (void *) &__gthrw_(
++/* Android's C library does not provide pthread_cancel, check for
++   `pthread_create' instead.  */
++#ifndef __BIONIC__
++                                  pthread_cancel
++#else
++                                  pthread_create
++#endif
++                                  );
+   return __gthread_active_ptr != 0;
+ }
+ 
+Index: gcc/gcc-4.5.2/libstdc++-v3/libsupc++/eh_globals.cc
+===================================================================
+--- gcc.orig/gcc-4.5.2/libstdc++-v3/libsupc++/eh_globals.cc	2011-12-16 14:14:13.220431541 -0800
++++ gcc/gcc-4.5.2/libstdc++-v3/libsupc++/eh_globals.cc	2011-12-16 14:15:07.384700187 -0800
+@@ -101,6 +101,14 @@
+ 
+   ~__eh_globals_init()
+   {
++    /* Work-around for an Android-specific bug, where this destructor
++     * is called with a NULL object pointer. This is due to a bug in the
++     * __cxa_finalize() implementation that was only fixed in 2.2.
++     */
++#ifdef __ANDROID__
++    if (this == NULL)
++        return;
++#endif
+     if (_M_init)
+       __gthread_key_delete(_M_key);
+     _M_init = false;
+Index: gcc/gcc-4.5.2/config.sub
+===================================================================
+--- gcc.orig/gcc-4.5.2/config.sub	2011-12-16 14:16:13.249026745 -0800
++++ gcc/gcc-4.5.2/config.sub	2011-12-16 14:18:03.289572454 -0800
+@@ -124,7 +124,7 @@
+ # Here we must recognize all the valid KERNEL-OS combinations.
+ maybe_os=`echo $1 | sed 's/^\(.*\)-\([^-]*-[^-]*\)$/\2/'`
+ case $maybe_os in
+-  nto-qnx* | linux-gnu* | linux-dietlibc | linux-newlib* | linux-uclibc* | \
++  nto-qnx* | linux-gnu* | linux-android* | linux-dietlibc | linux-newlib* | linux-uclibc* | \
+   uclinux-uclibc* | uclinux-gnu* | kfreebsd*-gnu* | knetbsd*-gnu* | netbsd*-gnu* | \
+   kopensolaris*-gnu* | \
+   storm-chaos* | os2-emx* | rtmk-nova*)
+@@ -1307,7 +1307,7 @@
+ 	      | -udi* | -eabi* | -lites* | -ieee* | -go32* | -aux* \
+ 	      | -chorusos* | -chorusrdb* | -cegcc* \
+ 	      | -cygwin* | -pe* | -psos* | -moss* | -proelf* | -rtems* \
+-	      | -mingw32* | -linux-gnu* | -linux-newlib* | -linux-uclibc* \
++	      | -mingw32* | -linux-gnu* | -linux-android* | -linux-newlib* | -linux-uclibc* \
+ 	      | -uxpv* | -beos* | -mpeix* | -udk* \
+ 	      | -interix* | -uwin* | -mks* | -rhapsody* | -darwin* | -opened* \
+ 	      | -openstep* | -oskit* | -conix* | -pw32* | -nonstopux* \
+Index: gcc/gcc-4.5.2/gcc/config/linux.h
+===================================================================
+--- gcc.orig/gcc-4.5.2/gcc/config/linux.h	2011-12-16 15:26:58.670078656 -0800
++++ gcc/gcc-4.5.2/gcc/config/linux.h	2011-12-16 15:47:01.808044624 -0800
+@@ -42,16 +42,17 @@
+    provides part of the support for getting C++ file-scope static
+    object constructed before entering `main'.  */
+    
+-#undef	STARTFILE_SPEC
+ #if defined HAVE_LD_PIE
+-#define STARTFILE_SPEC \
++#define LINUX_TARGET_STARTFILE_SPEC \
+   "%{!shared: %{pg|p|profile:gcrt1.o%s;pie:Scrt1.o%s;:crt1.o%s}} \
+    crti.o%s %{static:crtbeginT.o%s;shared|pie:crtbeginS.o%s;:crtbegin.o%s}"
+ #else
+-#define STARTFILE_SPEC \
++#define LINUX_TARGET_STARTFILE_SPEC \
+   "%{!shared: %{pg|p|profile:gcrt1.o%s;:crt1.o%s}} \
+    crti.o%s %{static:crtbeginT.o%s;shared|pie:crtbeginS.o%s;:crtbegin.o%s}"
+ #endif
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC LINUX_TARGET_STARTFILE_SPEC
+ 
+ /* Provide a ENDFILE_SPEC appropriate for GNU/Linux.  Here we tack on
+    the GNU/Linux magical crtend.o file (see crtstuff.c) which
+@@ -59,28 +60,37 @@
+    object constructed before entering `main', followed by a normal
+    GNU/Linux "finalizer" file, `crtn.o'.  */
+ 
+-#undef	ENDFILE_SPEC
+-#define ENDFILE_SPEC \
++#define LINUX_TARGET_ENDFILE_SPEC \
+   "%{shared|pie:crtendS.o%s;:crtend.o%s} crtn.o%s"
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC LINUX_TARGET_ENDFILE_SPEC
+ 
+ /* This is for -profile to use -lc_p instead of -lc.  */
++#define LINUX_TARGET_CC1_SPEC "%{profile:-p}"
+ #ifndef CC1_SPEC
+-#define CC1_SPEC "%{profile:-p}"
++#define CC1_SPEC LINUX_TARGET_CC1_SPEC
+ #endif
+ 
+ /* The GNU C++ standard library requires that these macros be defined.  */
+ #undef CPLUSPLUS_CPP_SPEC
+ #define CPLUSPLUS_CPP_SPEC "-D_GNU_SOURCE %(cpp)"
+ 
+-#undef	LIB_SPEC
+-#define LIB_SPEC \
++#define LINUX_TARGET_LIB_SPEC \
+   "%{pthread:-lpthread} \
+    %{shared:-lc} \
+    %{!shared:%{mieee-fp:-lieee} %{profile:-lc_p}%{!profile:-lc}}"
++#undef	LIB_SPEC
++#define LIB_SPEC LINUX_TARGET_LIB_SPEC
++
++/* C libraries supported on Linux.  */
++#define OPTION_GLIBC  (linux_libc == LIBC_GLIBC)
++#define OPTION_UCLIBC (linux_libc == LIBC_UCLIBC)
++#define OPTION_BIONIC (linux_libc == LIBC_BIONIC)
+ 
+ #define LINUX_TARGET_OS_CPP_BUILTINS()				\
+     do {							\
+-	builtin_define ("__gnu_linux__");			\
++        if (OPTION_GLIBC)					\
++	  builtin_define ("__gnu_linux__");			\
+ 	builtin_define_std ("linux");				\
+ 	builtin_define_std ("unix");				\
+ 	builtin_assert ("system=linux");			\
+@@ -105,27 +115,48 @@
+ #endif
+ 
+ /* Determine which dynamic linker to use depending on whether GLIBC or
+-   uClibc is the default C library and whether -muclibc or -mglibc has
+-   been passed to change the default.  */
+-#if UCLIBC_DEFAULT
+-#define CHOOSE_DYNAMIC_LINKER(G, U) "%{mglibc:%{muclibc:%e-mglibc and -muclibc used together}" G ";:" U "}"
+++   uClibc or Bionic is the default C library and whether
+++   -muclibc or -mglibc or -mbionic has been passed to change the default.  */
++
++#define CHOOSE_DYNAMIC_LINKER1(LIBC1, LIBC2, LIBC3, LD1, LD2, LD3)     \
++  "%{" LIBC2 ":" LD2 ";:%{" LIBC3 ":" LD3 ";:" LD1 "}}"
++
++#if DEFAULT_LIBC == LIBC_GLIBC
++#define CHOOSE_DYNAMIC_LINKER(G, U, B) \
++  CHOOSE_DYNAMIC_LINKER1 ("mglibc", "muclibc", "mbionic", G, U, B)
++#elif DEFAULT_LIBC == LIBC_UCLIBC
++#define CHOOSE_DYNAMIC_LINKER(G, U, B) \
++  CHOOSE_DYNAMIC_LINKER1 ("muclibc", "mglibc", "mbionic", U, G, B)
++#elif DEFAULT_LIBC == LIBC_BIONIC
++#define CHOOSE_DYNAMIC_LINKER(G, U, B) \
++  CHOOSE_DYNAMIC_LINKER1 ("mbionic", "mglibc", "muclibc", B, G, U)
+ #else
+-#define CHOOSE_DYNAMIC_LINKER(G, U) "%{muclibc:%{mglibc:%e-mglibc and -muclibc used together}" U ";:" G "}"
+-#endif
++#error "Unsupported DEFAULT_LIBC"
++#endif /* DEFAULT_LIBC */
+ 
+ /* For most targets the following definitions suffice;
+    GLIBC_DYNAMIC_LINKER must be defined for each target using them, or
+    GLIBC_DYNAMIC_LINKER32 and GLIBC_DYNAMIC_LINKER64 for targets
+    supporting both 32-bit and 64-bit compilation.  */
+-#define UCLIBC_DYNAMIC_LINKER "/lib/ld-uClibc.so.0"
+-#define UCLIBC_DYNAMIC_LINKER32 "/lib/ld-uClibc.so.0"
+-#define UCLIBC_DYNAMIC_LINKER64 "/lib/ld64-uClibc.so.0"
+-#define LINUX_DYNAMIC_LINKER \
+-  CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER, UCLIBC_DYNAMIC_LINKER)
+-#define LINUX_DYNAMIC_LINKER32 \
+-  CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER32, UCLIBC_DYNAMIC_LINKER32)
+-#define LINUX_DYNAMIC_LINKER64 \
+-  CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER64, UCLIBC_DYNAMIC_LINKER64)
++#ifndef RUNTIME_ROOT_PREFIX
++#define RUNTIME_ROOT_PREFIX ""
++#endif
++#define UCLIBC_DYNAMIC_LINKER RUNTIME_ROOT_PREFIX "/lib/ld-uClibc.so.0"
++#define UCLIBC_DYNAMIC_LINKER32 RUNTIME_ROOT_PREFIX "/lib/ld-uClibc.so.0"
++#define UCLIBC_DYNAMIC_LINKER64 RUNTIME_ROOT_PREFIX "/lib/ld64-uClibc.so.0"
++#define BIONIC_DYNAMIC_LINKER "/system/bin/linker"
++#define BIONIC_DYNAMIC_LINKER32 "/system/bin/linker"
++#define BIONIC_DYNAMIC_LINKER64 "/system/bin/linker64"
++
++#define LINUX_DYNAMIC_LINKER                                           \
++  CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER, UCLIBC_DYNAMIC_LINKER,  \
++                      BIONIC_DYNAMIC_LINKER)
++#define LINUX_DYNAMIC_LINKER32                                         \
++  CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER32, UCLIBC_DYNAMIC_LINKER32, \
++                  BIONIC_DYNAMIC_LINKER32)
++#define LINUX_DYNAMIC_LINKER64                                             \
++  CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER64, UCLIBC_DYNAMIC_LINKER64, \
++                      BIONIC_DYNAMIC_LINKER64)
+ 
+ /* Determine whether the entire c99 runtime
+    is present in the runtime library.  */
+Index: gcc/gcc-4.5.2/gcc/config/linux.opt
+===================================================================
+--- gcc.orig/gcc-4.5.2/gcc/config/linux.opt	2011-12-16 15:47:19.228131070 -0800
++++ gcc/gcc-4.5.2/gcc/config/linux.opt	2011-12-16 15:49:22.404742270 -0800
+@@ -19,10 +19,14 @@
+ ; along with GCC; see the file COPYING3.  If not see
+ ; <http://www.gnu.org/licenses/>.
+ 
+-mglibc
+-Target RejectNegative Report InverseMask(UCLIBC, GLIBC) Var(linux_uclibc) Init(UCLIBC_DEFAULT ? OPTION_MASK_UCLIBC : 0)
+-Use GNU libc instead of uClibc
++mbionic
++Target Report RejectNegative Var(linux_libc,LIBC_BIONIC) Init(DEFAULT_LIBC) Negative(mglibc)
++Use Bionic C library
+ 
+ muclibc
+-Target RejectNegative Report Mask(UCLIBC) Var(linux_uclibc) VarExists
+-Use uClibc instead of GNU libc
++Target Report RejectNegative Var(linux_libc,LIBC_UCLIBC) VarExists Negative(mbionic)
++Use uClibc C library
++
++mglibc
++Target RejectNegative Report Var(linux_libc,LIBC_GLIBC) VarExists Negative(muclibc)
++Use GNU C library
+Index: gcc/gcc-4.5.2/libstdc++-v3/config/os/bionic/ctype_base.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ gcc/gcc-4.5.2/libstdc++-v3/config/os/bionic/ctype_base.h	2011-12-16 15:54:45.658344851 -0800
+@@ -0,0 +1,57 @@
++// Locale support -*- C++ -*-
++
++// Copyright (C) 2010 Free Software Foundation, Inc.
++//
++// This file is part of the GNU ISO C++ Library.  This library is free
++// software; you can redistribute it and/or modify it under the
++// terms of the GNU General Public License as published by the
++// Free Software Foundation; either version 3, or (at your option)
++// any later version.
++
++// This library is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++
++// Under Section 7 of GPL version 3, you are granted additional
++// permissions described in the GCC Runtime Library Exception, version
++// 3.1, as published by the Free Software Foundation.
++
++// You should have received a copy of the GNU General Public License and
++// a copy of the GCC Runtime Library Exception along with this program;
++// see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
++// <http://www.gnu.org/licenses/>.
++
++//
++// ISO C++ 14882: 22.1  Locales
++//
++
++// Information as gleaned from /usr/include/ctype.h, for solaris2.5.1
++
++// Support for Solaris 2.5.1
++
++_GLIBCXX_BEGIN_NAMESPACE(std)
++
++  /// @brief  Base class for ctype.
++  struct ctype_base
++  {
++    // Non-standard typedefs.
++    typedef const int* 		__to_type;
++
++    // NB: Offsets into ctype<char>::_M_table force a particular size
++    // on the mask type. Because of this, we don't use an enum.
++    typedef char 		mask;
++    static const mask upper    	= _U;
++    static const mask lower 	= _L;
++    static const mask alpha 	= _U | _L;
++    static const mask digit 	= _N;
++    static const mask xdigit 	= _X | _N;
++    static const mask space 	= _S;
++    static const mask print 	= _P | _U | _L | _N | _B;
++    static const mask graph 	= _P | _U | _L | _N;
++    static const mask cntrl 	= _C;
++    static const mask punct 	= _P;
++    static const mask alnum 	= _U | _L | _N;
++  };
++
++_GLIBCXX_END_NAMESPACE
+Index: gcc/gcc-4.5.2/libstdc++-v3/config/os/bionic/ctype_inline.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ gcc/gcc-4.5.2/libstdc++-v3/config/os/bionic/ctype_inline.h	2011-12-16 15:54:45.658344851 -0800
+@@ -0,0 +1,71 @@
++// Locale support -*- C++ -*-
++
++// Copyright (C) 2010 Free Software Foundation, Inc.
++//
++// This file is part of the GNU ISO C++ Library.  This library is free
++// software; you can redistribute it and/or modify it under the
++// terms of the GNU General Public License as published by the
++// Free Software Foundation; either version 3, or (at your option)
++// any later version.
++
++// This library is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++
++// Under Section 7 of GPL version 3, you are granted additional
++// permissions described in the GCC Runtime Library Exception, version
++// 3.1, as published by the Free Software Foundation.
++
++// You should have received a copy of the GNU General Public License and
++// a copy of the GCC Runtime Library Exception along with this program;
++// see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
++// <http://www.gnu.org/licenses/>.
++
++/** @file ctype_inline.h
++ *  This is an internal header file, included by other library headers.
++ *  You should not attempt to use it directly.
++ */
++
++//
++// ISO C++ 14882: 22.1  Locales
++//
++
++// ctype bits to be inlined go here. Non-inlinable (ie virtual do_*)
++// functions go in ctype.cc
++
++_GLIBCXX_BEGIN_NAMESPACE(std)
++
++  bool
++  ctype<char>::
++  is(mask __m, char __c) const
++  { return _M_table[static_cast<unsigned char>(__c)] & __m; }
++
++  const char*
++  ctype<char>::
++  is(const char* __low, const char* __high, mask* __vec) const
++  {
++    while (__low < __high)
++      *__vec++ = _M_table[static_cast<unsigned char>(*__low++)];
++    return __high;
++  }
++
++  const char*
++  ctype<char>::
++  scan_is(mask __m, const char* __low, const char* __high) const
++  {
++    while (__low < __high && !this->is(__m, *__low))
++      ++__low;
++    return __low;
++  }
++
++  const char*
++  ctype<char>::
++  scan_not(mask __m, const char* __low, const char* __high) const
++  {
++    while (__low < __high && this->is(__m, *__low) != 0)
++      ++__low;
++    return __low;
++  }
++
++_GLIBCXX_END_NAMESPACE
+Index: gcc/gcc-4.5.2/libstdc++-v3/config/os/bionic/ctype_noninline.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ gcc/gcc-4.5.2/libstdc++-v3/config/os/bionic/ctype_noninline.h	2011-12-16 15:54:45.658344851 -0800
+@@ -0,0 +1,98 @@
++// Locale support -*- C++ -*-
++
++// Copyright (C) 2010 Free Software Foundation, Inc.
++//
++// This file is part of the GNU ISO C++ Library.  This library is free
++// software; you can redistribute it and/or modify it under the
++// terms of the GNU General Public License as published by the
++// Free Software Foundation; either version 3, or (at your option)
++// any later version.
++
++// This library is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++
++// Under Section 7 of GPL version 3, you are granted additional
++// permissions described in the GCC Runtime Library Exception, version
++// 3.1, as published by the Free Software Foundation.
++
++// You should have received a copy of the GNU General Public License and
++// a copy of the GCC Runtime Library Exception along with this program;
++// see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
++// <http://www.gnu.org/licenses/>.
++
++/** @file ctype_noninline.h
++ *  This is an internal header file, included by other library headers.
++ *  You should not attempt to use it directly.
++ */
++
++//
++// ISO C++ 14882: 22.1  Locales
++//
++
++// Information as gleaned from /usr/include/ctype.h
++
++  const ctype_base::mask*
++  ctype<char>::classic_table() throw()
++  { return _ctype_ + 1; }
++
++  ctype<char>::ctype(__c_locale, const mask* __table, bool __del,
++		     size_t __refs)
++  : facet(__refs), _M_del(__table != 0 && __del),
++  _M_toupper(NULL), _M_tolower(NULL),
++  _M_table(__table ? __table : classic_table())
++  {
++    memset(_M_widen, 0, sizeof(_M_widen));
++    _M_widen_ok = 0;
++    memset(_M_narrow, 0, sizeof(_M_narrow));
++    _M_narrow_ok = 0;
++  }
++
++  ctype<char>::ctype(const mask* __table, bool __del, size_t __refs)
++  : facet(__refs), _M_del(__table != 0 && __del),
++  _M_toupper(NULL), _M_tolower(NULL),
++  _M_table(__table ? __table : classic_table())
++  {
++    memset(_M_widen, 0, sizeof(_M_widen));
++    _M_widen_ok = 0;
++    memset(_M_narrow, 0, sizeof(_M_narrow));
++    _M_narrow_ok = 0;
++  }
++
++  char
++  ctype<char>::do_toupper(char __c) const
++  {
++    int __x = __c;
++    return (this->is(ctype_base::lower, __c) ? (__x - 'a' + 'A') : __x);
++  }
++
++  const char*
++  ctype<char>::do_toupper(char* __low, const char* __high) const
++  {
++    while (__low < __high)
++      {
++	*__low = this->do_toupper(*__low);
++	++__low;
++      }
++    return __high;
++  }
++
++  char
++  ctype<char>::do_tolower(char __c) const
++  {
++    int __x = __c;
++    return (this->is(ctype_base::upper, __c) ? (__x - 'A' + 'a') : __x);
++  }
++
++  const char*
++  ctype<char>::do_tolower(char* __low, const char* __high) const
++  {
++    while (__low < __high)
++      {
++	*__low = this->do_tolower(*__low);
++	++__low;
++      }
++    return __high;
++  }
++
+Index: gcc/gcc-4.5.2/libstdc++-v3/config/os/bionic/os_defines.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ gcc/gcc-4.5.2/libstdc++-v3/config/os/bionic/os_defines.h	2011-12-16 15:54:45.658344851 -0800
+@@ -0,0 +1,36 @@
++// Specific definitions for Bionic  -*- C++ -*-
++
++// Copyright (C) 2010 Free Software Foundation, Inc.
++//
++// This file is part of the GNU ISO C++ Library.  This library is free
++// software; you can redistribute it and/or modify it under the
++// terms of the GNU General Public License as published by the
++// Free Software Foundation; either version 3, or (at your option)
++// any later version.
++
++// This library is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++
++// Under Section 7 of GPL version 3, you are granted additional
++// permissions described in the GCC Runtime Library Exception, version
++// 3.1, as published by the Free Software Foundation.
++
++// You should have received a copy of the GNU General Public License and
++// a copy of the GCC Runtime Library Exception along with this program;
++// see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
++// <http://www.gnu.org/licenses/>.
++
++/** @file os_defines.h
++ *  This is an internal header file, included by other library headers.
++ *  You should not attempt to use it directly.
++ */
++
++#ifndef _GLIBCXX_OS_DEFINES
++#define _GLIBCXX_OS_DEFINES 1
++
++// System-specific #define, typedefs, corrections, etc, go here.  This
++// file will come before all others.
++
++#endif
+Index: gcc/gcc-4.5.2/libstdc++-v3/acinclude.m4
+===================================================================
+--- gcc.orig/gcc-4.5.2/libstdc++-v3/acinclude.m4	2011-12-16 15:56:13.978782756 -0800
++++ gcc/gcc-4.5.2/libstdc++-v3/acinclude.m4	2011-12-16 15:58:14.555380658 -0800
+@@ -104,6 +104,13 @@
+   #endif
+   ], uclibc=yes, uclibc=no)
+ 
++  AC_EGREP_CPP([_using_bionic], [
++  #include <stdio.h>
++  #if __BIONIC__
++    _using_bionic
++  #endif
++  ], bionic=yes, bionic=no)
++
+   # Find platform-specific directories containing configuration info.
+   # Also possibly modify flags used elsewhere, as needed by the platform.
+   GLIBCXX_CHECK_HOST
+Index: gcc/gcc-4.5.2/libstdc++-v3/configure.host
+===================================================================
+--- gcc.orig/gcc-4.5.2/libstdc++-v3/configure.host	2011-12-16 16:00:45.816130723 -0800
++++ gcc/gcc-4.5.2/libstdc++-v3/configure.host	2011-12-16 16:01:13.788269444 -0800
+@@ -238,6 +238,8 @@
+   gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu)
+     if [ "$uclibc" = "yes" ]; then
+       os_include_dir="os/uclibc"
++    elif [ "$bionic" = "yes" ]; then
++      os_include_dir="os/bionic"
+     else
+       os_include_dir="os/gnu-linux"
+     fi
+Index: gcc/gcc-4.5.2/libstdc++-v3/configure
+===================================================================
+--- gcc.orig/gcc-4.5.2/libstdc++-v3/configure	2011-12-16 16:01:40.564402199 -0800
++++ gcc/gcc-4.5.2/libstdc++-v3/configure	2011-12-16 16:03:05.600823781 -0800
+@@ -5209,6 +5209,24 @@
+ rm -f conftest*
+ 
+ 
++cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++
++  #include <stdio.h>
++  #if __BIONIC__
++    _using_bionic
++  #endif
++
++_ACEOF
++if (eval "$ac_cpp conftest.$ac_ext") 2>&5 |
++  $EGREP "_using_bionic" >/dev/null 2>&1; then :
++  bionic=yes
++else
++  bionic=no
++fi
++rm -f conftest*
++
++
+   # Find platform-specific directories containing configuration info.
+   # Also possibly modify flags used elsewhere, as needed by the platform.
+ 
+Index: gcc/gcc-4.5.2/libiberty/getpagesize.c
+===================================================================
+--- gcc.orig/gcc-4.5.2/libiberty/getpagesize.c	2011-12-16 16:37:45.523137662 -0800
++++ gcc/gcc-4.5.2/libiberty/getpagesize.c	2011-12-16 16:38:24.475330812 -0800
+@@ -60,11 +60,13 @@
+ # endif /* PAGESIZE */
+ #endif /* GNU_OUR_PAGESIZE */
+ 
++#if DEFAULT_LIBC != LIBC_BIONIC
+ int
+ getpagesize (void)
+ {
+   return (GNU_OUR_PAGESIZE);
+ }
++#endif
+ 
+ #else /* VMS */
+ 

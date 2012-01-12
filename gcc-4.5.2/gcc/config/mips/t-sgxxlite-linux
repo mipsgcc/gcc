@@ -1,0 +1,6 @@
+MULTILIB_OPTIONS = muclibc mmicromips/mips16 msoft-float EL/EB
+MULTILIB_DIRNAMES = uclibc micromips mips16 soft-float el eb
+MULTILIB_MATCHES := EL=mel EB=meb
+MULTILIB_EXCEPTIONS = *muclibc*/*mmicromips* *muclibc*/*mips16*
+EXTRA_MULTILIB_PARTS = crtbegin.o crtend.o crtbeginS.o crtendS.o crtbeginT.o
+
