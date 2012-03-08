@@ -1,0 +1,16 @@
+Index: gcc/gcc-4.5.2/gcc/config/mips/mips.c
+===================================================================
+--- gcc.orig/gcc-4.5.2/gcc/config/mips/mips.c	2012-03-07 13:30:25.000000000 -0800
++++ gcc/gcc-4.5.2/gcc/config/mips/mips.c	2012-03-07 13:43:35.943404000 -0800
+@@ -9723,6 +9723,11 @@ mips_interrupt_extra_call_saved_reg_p (u
+ static bool
+ mips_cfun_call_saved_reg_p (unsigned int regno)
+ {
++  /* If the user makes an ordinarily-call-saved register global,
++     that register is no longer call-saved.  */
++  if (global_regs[regno])
++    return false;
++
+   /* Interrupt handlers need to save extra registers.  */
+   if (cfun->machine->interrupt_handler_p
+       && mips_interrupt_extra_call_saved_reg_p (regno))
