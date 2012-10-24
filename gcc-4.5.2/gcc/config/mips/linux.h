@@ -136,7 +136,7 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 #endif
 
 #define LINUX_DRIVER_SELF_SPECS \
-  NO_SHARED_SPECS							\
+  LINUX_OR_ANDROID_CC(NO_SHARED_SPECS, "")				\
   MARCH_MTUNE_NATIVE_SPECS,						\
   /* -mplt has no effect without -mno-shared.  Simplify later		\
      specs handling by removing a redundant option.  */			\
@@ -163,6 +163,10 @@ do {                                                            \
   "%{ffast-math|funsafe-math-optimizations:crtfastmath.o%s} \
    %{shared|pie:crtendS.o%s;:crtend.o%s} crtn.o%s"
 
+#undef  LINUX_TARGET_MATHFILE_SPEC
+#define LINUX_TARGET_MATHFILE_SPEC \
+  "%{ffast-math|funsafe-math-optimizations:crtfastmath.o%s}"
+
 #undef  LINK_SPEC
 #define LINK_SPEC							\
   LINUX_OR_ANDROID_LD (LINUX_SUBTARGET_LINK_SPEC,			\
@@ -188,4 +192,6 @@ do {                                                            \
 
 #undef ENDFILE_SPEC
 #define ENDFILE_SPEC							\
-  LINUX_OR_ANDROID_LD (LINUX_TARGET_ENDFILE_SPEC, ANDROID_ENDFILE_SPEC)
+  LINUX_OR_ANDROID_LD (LINUX_TARGET_ENDFILE_SPEC,			\
+		       LINUX_TARGET_MATHFILE_SPEC " "			\
+		       ANDROID_ENDFILE_SPEC)
